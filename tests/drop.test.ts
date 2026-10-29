@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { enrollAll, expectUnchanged, setup } from './helpers.js';
+import { CourseOffering } from '../src/courseOffering.js';
+import type { LearnerDirectory } from '../src/types.js';
+import { C101, enrollAll, expectUnchanged, setup } from './helpers.js';
 
 describe('drop an enrolled learner (AC3)', () => {
   // D1
@@ -106,6 +108,67 @@ describe('learner record deleted while in the offering (option A)', () => {
     directory.removeLearner('L1');
     offering.drop('L1');
     expect(expectUnchanged(offering, () => offering.drop('L1'))).toEqual({ ok: false, code: 'UNKNOWN_LEARNER' });
+  });
+});
+
+/** A directory that throws for one chosen learner, standing in for a records-service outage (Finding F1). */
+function flakyDirectory() {
+  const state = { failOn: null as string | null };
+  const directory: LearnerDirectory = {
+    getCompletedCourses(id) {
+      if (id === state.failOn) throw new Error('records service unavailable');
+      return new Set([C101]);
+    },
+  };
+  return { directory, state };
+}
+
+describe('directory failure leaves state unchanged (F1; I4, I5)', () => {
+  it('drop: an error while checking the waitlist head aborts the whole drop', () => {
+    const { directory, state } = flakyDirectory();
+    const offering = new CourseOffering({ capacity: 1, requiredCourseIds: [C101], directory });
+    offering.enroll('L1');
+    offering.enroll('L2');
+    offering.enroll('L3');
+    const before = offering.snapshot();
+    state.failOn = 'L2';
+    expect(() => offering.drop('L1')).toThrow('records service unavailable');
+    expect(offering.snapshot()).toEqual(before);
+  });
+
+  it('drop: an error after earlier heads were found ineligible still changes nothing', () => {
+    const records = new Map<string, ReadonlySet<string>>([
+      ['L1', new Set([C101])],
+      ['L2', new Set()],
+      ['L3', new Set([C101])],
+    ]);
+    let fail = false;
+    const directory: LearnerDirectory = {
+      getCompletedCourses(id) {
+        if (fail && id === 'L3') throw new Error('records service unavailable');
+        return records.get(id);
+      },
+    };
+    const offering = new CourseOffering({ capacity: 1, requiredCourseIds: [C101], directory });
+    offering.enroll('L1');
+    records.set('L2', new Set([C101]));
+    offering.enroll('L2');
+    offering.enroll('L3');
+    records.set('L2', new Set()); // L2 will be skipped, then the L3 lookup fails
+    const before = offering.snapshot();
+    fail = true;
+    expect(() => offering.drop('L1')).toThrow('records service unavailable');
+    expect(offering.snapshot()).toEqual(before);
+  });
+
+  it('enroll: an error from the directory changes nothing', () => {
+    const { directory, state } = flakyDirectory();
+    const offering = new CourseOffering({ capacity: 1, requiredCourseIds: [C101], directory });
+    offering.enroll('L1');
+    const before = offering.snapshot();
+    state.failOn = 'L2';
+    expect(() => offering.enroll('L2')).toThrow('records service unavailable');
+    expect(offering.snapshot()).toEqual(before);
   });
 });
 

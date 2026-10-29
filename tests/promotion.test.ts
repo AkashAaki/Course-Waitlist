@@ -116,6 +116,20 @@ describe('ineligible learner at the front of the queue: skip and remove (AC4)', 
     expect(offering.drop('L1')).toMatchObject({ promoted: 'L2', skipped: [] });
   });
 
+  // H1 — Phase 4 hand trace (VERIFICATION.md §2); expected values were written from the trace, not from a run.
+  it('matches the hand-traced scenario: promote L3, then skip L4 and promote L5', () => {
+    const { offering, directory } = setup({ capacity: 2 });
+    enrollAll(offering, ['L1', 'L2'], 'ENROLLED');
+    enrollAll(offering, ['L3', 'L4', 'L5'], 'WAITLISTED');
+    directory.setCompletedCourses('L4', []);
+
+    expect(offering.drop('L1')).toEqual({ ok: true, code: 'DROPPED', promoted: 'L3', skipped: [] });
+    expect(offering.snapshot()).toMatchObject({ enrolled: ['L2', 'L3'], waitlist: ['L4', 'L5'] });
+
+    expect(offering.drop('L2')).toEqual({ ok: true, code: 'DROPPED', promoted: 'L5', skipped: ['L4'] });
+    expect(offering.snapshot()).toMatchObject({ enrolled: ['L3', 'L5'], waitlist: [] });
+  });
+
   // D9
   it('lets a skipped learner who regains eligibility enroll again as a new request', () => {
     const { offering, directory } = setup({ capacity: 1 });

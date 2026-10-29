@@ -78,9 +78,13 @@ export class CourseOffering {
       return { ok: false, code: 'NOT_ENROLLED' };
     }
 
-    // Seat release and promotion happen in this one synchronous block (I5).
+    // Read, then write: every directory lookup happens in planPromotion() before any mutation, so if the directory
+    // throws, the drop is abandoned with state untouched (I4, I5; Finding F1 in VERIFICATION.md).
+    const { promoted, skipped } = this.planPromotion();
+
     this.enrolled.delete(id);
-    const { promoted, skipped } = this.promote();
+    this.waitlist.splice(0, skipped.length + (promoted === null ? 0 : 1));
+    if (promoted !== null) this.enrolled.add(promoted);
     return { ok: true, code: 'DROPPED', promoted, skipped };
   }
 
@@ -94,24 +98,19 @@ export class CourseOffering {
   }
 
   /**
-   * Fills free seats from the front of the waitlist (I3). Eligibility is re-checked with the same rule used at join
-   * time (I6); an ineligible head, or one no longer in the directory, is removed and reported (skip-and-remove).
-   * Stops when the course is full or the waitlist is empty, so I1 and I7 hold afterwards.
+   * Read-only: decides who fills the one seat a drop frees, without mutating anything. Scans from the front of the
+   * waitlist (I3), re-checking eligibility with the same rule used at join time (I6). Ineligible heads, or heads no
+   * longer in the directory, come before the promoted learner and are skipped and removed (A3). A drop frees exactly one
+   * seat, and by I7 a non-empty waitlist means the course was full, so at most one learner is promoted.
    */
-  private promote(): { promoted: LearnerId | null; skipped: LearnerId[] } {
-    let promoted: LearnerId | null = null;
+  private planPromotion(): { promoted: LearnerId | null; skipped: LearnerId[] } {
     const skipped: LearnerId[] = [];
-    while (this.enrolled.size < this.capacity && this.waitlist.length > 0) {
-      const head = this.waitlist.shift()!;
+    for (const head of this.waitlist) {
       const completed = this.directory.getCompletedCourses(head);
-      if (completed !== undefined && isEligible(this.requiredCourseIds, completed)) {
-        this.enrolled.add(head);
-        promoted = head;
-      } else {
-        skipped.push(head);
-      }
+      if (completed !== undefined && isEligible(this.requiredCourseIds, completed)) return { promoted: head, skipped };
+      skipped.push(head);
     }
-    return { promoted, skipped };
+    return { promoted: null, skipped };
   }
 
   /** Enroll's validation (DESIGN.md §4): INVALID_REQUEST, then UNKNOWN_LEARNER. */

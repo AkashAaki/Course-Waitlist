@@ -76,11 +76,11 @@ Request-level outcomes are **returned, never thrown**. Only programmer errors at
 ## 5. Invariants
 | ID | Invariant | Enforced by |
 |---|---|---|
-| I1 | `enrolled.size ≤ capacity` | `enroll` adds only when `size < capacity`; promotion adds only into a seat just freed |
-| I2 | A learner appears at most once across `enrolled ∪ waitlist` | Membership checks run before any insert; promotion moves (`shift` + `add`), never copies |
+| I1 | `enrolled.size ≤ capacity` | `enroll` adds only when `size < capacity`. A drop removes one learner and promotes at most one. |
+| I2 | A learner appears at most once across `enrolled ∪ waitlist` | Membership checks run before any insert. Promotion moves the learner: it removes them from the waitlist and adds them to `enrolled`, never copying. |
 | I3 | Waitlist is strictly FIFO by join order; promotion takes the earliest *eligible* entry | Append-only joins; promotion scans from index 0 only |
-| I4 | A rejected or no-op request changes no state | All checks complete before the first mutation (validate → mutate) |
-| I5 | Drop and promotion happen in one atomic step | A single synchronous method with no `await` (§7) |
+| I4 | A rejected or no-op request changes no state | All checks, **including every directory lookup**, finish before the first mutation (read, then write). A throwing directory also leaves state unchanged. |
+| I5 | Drop and promotion happen in one atomic step | A single synchronous method with no `await` (§7). The promotion plan is computed before the seat is released (F1). |
 | I6 | The eligibility rule is identical at join and promotion | Both call the one function `missingPrerequisites` / `isEligible` in `src/eligibility.ts` |
 | I7 | `waitlist.length > 0 ⇒ enrolled.size === capacity` | Joins only when full; promotion fills the seat or empties the waitlist trying |
 
@@ -100,24 +100,32 @@ Planned tests (Phase 2) will assert I1, I2 and I7 after every operation, I4 by c
 ### Promotion algorithm
 ```
 drop(L):
-  validate L                                   # INVALID_REQUEST / UNKNOWN_LEARNER, no change
+  check L's format                             # INVALID_REQUEST, no change
   if L in waitlist: remove L; return LEFT_WAITLIST
-  if L not in enrolled: return NOT_ENROLLED    # no change
-  enrolled.delete(L)
+  if L not in enrolled: return UNKNOWN_LEARNER or NOT_ENROLLED   # no change
+  # read phase: directory lookups only, no mutation
   promoted = null; skipped = []
-  while enrolled.size < capacity and waitlist not empty:
-    head = waitlist.shift()                    # earliest joiner
-    if isEligible(required, directory(head)): enrolled.add(head); promoted = head
+  for head in waitlist, front to back:         # earliest joiner first
+    if isEligible(required, directory(head)): promoted = head; break
     else: skipped.push(head)                   # skip and remove
+  # write phase: no calls out, cannot fail part-way
+  enrolled.delete(L)
+  waitlist.removeFront(skipped.length + (promoted ? 1 : 0))
+  if promoted: enrolled.add(promoted)
   return DROPPED { promoted, skipped }
 ```
-A drop frees exactly one seat, so the loop promotes at most one learner. It is written against `capacity` rather than
-"one" so that I1 and I7 hold by construction. A waitlisted learner missing from the directory is treated as ineligible and
+A drop frees exactly one seat. By I7, a non-empty waitlist means the course was full, so promoting at most one learner
+refills the course and preserves I1 and I7. A waitlisted learner missing from the directory is treated as ineligible and
 skipped, since only known learners can join.
+
+**Read, then write (Finding F1):** the directory is an external dependency and may throw, for example if a real records
+service times out. All lookups therefore happen before the first mutation. If one throws, the exception propagates and the
+offering is exactly as it was. An earlier version released the seat and removed each head from the queue *before* looking
+it up, so a failure left the dropper gone and the head lost. Phase 4 review found this; see `VERIFICATION.md`.
 
 ## 7. Concurrency and persistence
 - **Approach: synchronous methods on a single thread.** `enroll` and `drop` contain no `await` and do no I/O. In Node, each
-  call runs to completion before any other JavaScript runs, so validate → mutate → promote cannot interleave with
+  call runs to completion before any other JavaScript runs, so validate → plan promotion → mutate cannot interleave with
   another request. This is what makes I4 and I5 hold.
 - **Test:** one `Promise.all` test sends two enrolls for the last seat and expects exactly one `ENROLLED`. Because the
   methods are synchronous this is a **regression guard** (it would catch someone adding an `await` mid-operation),
@@ -134,6 +142,6 @@ skipped, since only known learners can join.
 | Duplicates are no-ops with distinct codes | Idempotent retries are safe, and the caller still learns why | `ok: false` covers both "harmless" and "rejected" |
 | Injected directory, not cached | Eligibility is current at promotion, which is what makes the queue-front case real | One directory lookup per learner examined |
 | Normalise IDs (NFKC + trim + upper-case), but not separators or zeros | Casing and spacing differences in caller input can't create a second record for the same learner (protects I2) | IDs that differ only by case can't coexist. Separator variants (`L-1`) still count as distinct IDs. |
-| `waitlist` as an array, using `shift()` | Simplest correct FIFO structure | O(n) per shift. Fine for one offering's waitlist. |
+| `waitlist` as an array (front removal via `splice`) | Simplest correct FIFO structure | O(n) per front removal or `includes`. Fine for one offering's waitlist. |
 | No drop history | Smaller state, no extra policy | A repeated drop and a never-enrolled drop return the same `NOT_ENROLLED` |
 | Revoked prerequisite doesn't evict an enrolled learner | Eviction is a separate policy the spec doesn't ask for | Enrolled learners may become ineligible (see LIMITATIONS) |
