@@ -1,8 +1,53 @@
-# Verification Evidence (Phase 4)
+# Verification
+
+This file covers the verification strategy (§0), Phase 4's independent verification (§1–§3) and the Phase 6 self-review
+against the spec (§4). Who ran each check is stated; engineer-run output is in [evidence/engineer-runs.md](evidence/engineer-runs.md).
 
 Environment: Node v26.13.0, Vitest 5.0.5. Phase 4 started from commit `9fee9bb` (Phase 3: 90/90 passing, 100% coverage).
 It found and fixed one defect (F1, §3). The final state is **94/94 passing** with 100% statement, branch, function and
 line coverage. Coverage shows that every line *ran*. The mutation checks show that the assertions *notice* when behaviour breaks.
+
+## 0. Strategy
+Each layer answers a different question, and none is relied on alone. The layers that found something are the ones
+that went beyond coverage: the invariant review found F1, and mutation checks then pinned the fix.
+
+| Layer | Question it answers | Evidence | Limit | Run by |
+|---|---|---|---|---|
+| Type check (`tsc --noEmit`) | Do code and tests respect the result-code unions in `src/types.ts`? | exit 0 | Says nothing about behaviour | Engineer, Phases 0–3 and 5 |
+| Scenario tests | Does each acceptance criterion and stated policy behave as specified? | 94 passing; map in §0.1 and §4.2 | Only the scenarios written | Engineer, Phases 4–5 |
+| Invariant wrapper `checked()`, plus `expectUnchanged` | Do I1, I2, I7 and canonical IDs hold after **every** call? Does a rejection change nothing (I4)? | Used across the suite (`tests/helpers.ts`) | Checks state, not result codes | Within the suite |
+| Seeded sweep S1 | Does a random operation sequence break an invariant or an independent post-condition oracle? | 25 seeds × 80 ops; asserts that all 10 result codes and at least one skip occurred | The oracle reuses `isEligible` (LIMITATIONS #16) | Within the suite |
+| Tests first | Did each test fail for the intended reason before the code existed? | 58 failed / 28 passed before implementation; 2 failing reproductions each before option A and before the F1 fix | Reproductions are AI-run | Engineer (Phase 2 count); AI (reproductions) |
+| Coverage | Did every line and branch run? | 100% (§4.1) | Execution, not detection | AI and engineer, full table |
+| Mutation checks | Would the tests notice a likely bug? | 17/17 killed (§1) | Hand-picked set | Engineer at `adf98c6` and on the final code; AI at `3f660a6` |
+| Hand trace H1 | Does a worked example agree with the code? | §2 | AI-produced, then checked by hand | AI; engineer checked |
+| Invariant code review | Does each invariant hold on every path, including when the directory throws? | §3; found F1 | Reviewed by the same AI that wrote the code | AI |
+| Concurrency regression guards | Does a racing enroll or drop keep last-seat and FIFO behaviour? | 2 `Promise.all` tests (R1) | Not proof of thread safety; no async mutant was run (§1 Limits) | Within the suite |
+| Clean clone | Does the repo install, build and pass from scratch? | §4.1 | Node 26 only | AI |
+
+### 0.1 Failure scenarios and edge cases
+Test IDs are the comments in `tests/`; "unnamed" tests carry no ID and are identified by their test name.
+
+| Scenario | Expected outcome | Tests |
+|---|---|---|
+| Capacity 0, negative, fractional, NaN or ∞ | `RangeError` at construction | C1 |
+| Seat free, prerequisites met / not met | `ENROLLED` / `PREREQ_NOT_MET` listing missing courses, no change | E1, E2 / E3, E4 |
+| Course full, eligible / ineligible learner | `WAITLISTED` with a 1-based position / rejected, never queued | E5 / E6 |
+| Duplicate enroll: enrolled, waitlisted, other ID format, repeated retries | `ALREADY_ENROLLED` / `ALREADY_WAITLISTED`; never a second record | E7, E8, E9, unnamed normalised-ID test |
+| Prerequisite revoked after enrolment | Stays enrolled; a repeat enroll returns `ALREADY_ENROLLED` | E12 |
+| Unknown ID; separator variant `L-1`; non-string or blank ID | `UNKNOWN_LEARNER`; `UNKNOWN_LEARNER`; `INVALID_REQUEST`, no change | E10, D13; unnamed separator test; E11, D14 |
+| Drop by a never-enrolled learner; repeated drop; repeated leave | `NOT_ENROLLED`; no second promotion | D11, D12, unnamed repeated-leave test |
+| Leave the waitlist | `LEFT_WAITLIST`; no promotion; others keep their order | D10 |
+| FIFO promotion | Head promoted in the same step; join order, not ID order; a learner who left is never promoted | D2, D3, D4, unnamed left-waitlist test |
+| Ineligible learner at the queue front | Skipped and removed; next eligible promoted; learners behind untouched; all ineligible → seat stays open | D5, D6, unnamed "does not touch" test, D7 |
+| Same rule at join and at promotion; eligibility regained before the drop | Identical outcome (I6); re-check promotes them | D8, unnamed re-check test |
+| After skips | A newcomer takes the open seat; a skipped learner can re-enroll as a new request | E13, D9 |
+| Waitlisted learner deleted from the directory | Skipped as ineligible at promotion | unnamed test in `invariants.test.ts` |
+| Learner record deleted while in the offering (option A) | Can still drop or leave; `UNKNOWN_LEARNER` once out | 3 tests in `drop.test.ts` |
+| Directory throws during drop or enroll (F1) | Exception propagates; state unchanged | 3 tests in `drop.test.ts` |
+| Re-enrollment | A promoted learner counts as enrolled; a dropped learner gets a free seat or the back of the waitlist | D15, D16 |
+| Racing requests | Exactly one wins the last seat; a newcomer racing a drop does not jump the queue | R1 (2 tests) |
+| Caller mutates a snapshot | No effect on the offering | S2 |
 
 ## 1. Mutation checks: `npm run mutate`
 `scripts/mutate.mjs` applies one hand-picked bug at a time to `src/`, runs the full suite, records which tests fail, and
@@ -44,6 +89,9 @@ this set, not committed) and killed 16/16. The set was then updated for the read
 
 **Limits:** the mutations are hand-picked, not generated (no Stryker). They cover the bugs judged likely, not every
 possible bug. The `find` snippets are tied to the current code, so a refactor will produce `ERROR` rows until they are updated.
+The concurrency guards are not mutation-checked: the advisory chat suggested an `await` mutant inside `enroll` (key prompts 0p),
+and it was not run. LIMITATIONS #3's claim that the guards "would catch someone adding an `await`" is therefore reasoned,
+not demonstrated.
 
 ## 2. Hand trace
 Scenario (plan §4): capacity 2; L1 and L2 enrolled; waitlist L3, L4, L5; L4's prerequisite is revoked; drop L1, then drop L2.
@@ -56,8 +104,8 @@ The trace below follows the final read-then-write `drop`.
 | drop L2 | L4 ineligible → skip; L5 eligible → promote L5 | remove L2; remove 2 from front; add L5 | [L3, L5] | [] | `DROPPED` promoted L5, skipped [L4] |
 
 Encoded as test **H1** in `tests/promotion.test.ts`, with expected values taken from this table. It passed on its first run,
-both before and after the F1 refactor. **Caveat:** the AI did this trace. It counts as *independent* evidence only once the
-engineer has checked it against `drop()` / `planPromotion()`.
+both before and after the F1 refactor. The AI did this trace; the **engineer checked it by hand** against `drop()` / `planPromotion()` in
+`src/courseOffering.ts` on 2026-10-29, and both rows matched.
 
 ## 3. Invariant review (`src/courseOffering.ts`, final)
 | Inv | Where it's upheld | Verdict |
@@ -112,14 +160,14 @@ Not checked: Node 22.12 or 24, which are within `engines` but not installed here
 | 4 | Ineligible never enrolled or promoted; skip/retain policy consistent | Policy: DESIGN.md §6 (reject at join, skip-and-remove at the front). Tests E3, E4, E6, D5–D9, E13, missing-record skip; D8 (same rule at both points); mutants c, i | **Met** |
 | 5 | Invalid requests and duplicate drops: clear results, no corruption | Explicit codes (DESIGN.md §4); E10–E12, D10–D14, deleted-record tests, F1 directory-failure tests; `expectUnchanged`; S1 oracle; S2; mutants e, h, m | **Met** |
 | 6 | Tests cover available, full, duplicate, FIFO, prereq failure, invalid/repeated drops; concurrency test if the starter uses concurrency | Available E1/E2 · full E5/E6 · duplicate E7–E9 · FIFO D2–D4 · prereq failure E3/E4/E6 · invalid/repeated drop D11–D14. No starter, so no locking pattern to preserve; two regression-guard concurrency tests were added anyway (LIMITATIONS #3) | **Met** |
-| 7 | AI used; prompts, responses, accept/edit/reject and verification recorded | AI_USAGE.md: 12 entries with prompt summary, response summary, files and evidence; Summary section | **Partial:** (a) every Status is still **PENDING** until the engineer marks it; (b) prompts are recorded as *summaries* with key quotes, not verbatim |
+| 7 | AI used; prompts, responses, accept/edit/reject and verification recorded | AI_USAGE.md: entries 0, 0a and 1–16, each with prompt, response, files, and separate AI-run and Engineer-run evidence; a Prompt engineering section. [prompts/](prompts/key-prompts.md): system prompt verbatim; key prompts labelled verbatim, quoted during the session, or summary | **Partial:** every Status was marked by the engineer on 2026-10-29; remaining gap: prompts for entries 0–3 and 7 exist only as summaries, and the "quoted during the session" prompts await engineer confirmation |
 
 ### 4.3 Deliverables
 | # | Deliverable | Where | Verdict |
 |---|---|---|---|
 | D1 | Runnable code and focused tests | `src/`, `tests/`; clean clone §4.1 | **Met** |
 | D2 | Design spec (boundary, data/API, invariants, promotion rule, concurrency/persistence, assumptions/tradeoffs; proportionate) | DESIGN.md §2, §3–4, §5, §6, §7, §6+§8 (about 150 lines) | **Met** |
-| D3 | AI prompt/use record with files/decisions and verification evidence | AI_USAGE.md, VERIFICATION.md | **Partial:** same as AC7; the engineer's own re-run output is recorded for Phase 0 only |
+| D3 | AI prompt/use record with files/decisions and verification evidence | AI_USAGE.md, VERIFICATION.md, [evidence/engineer-runs.md](evidence/engineer-runs.md), [prompts/](prompts/key-prompts.md) | **Partial:** Statuses marked by the engineer (2026-10-29); prompt gap as AC7. Engineer-run output is recorded for Phases 0–5 and the final code (entries 2, 3, 5, 6, 8, 9, 10, 11). Entry 4 is covered inside the Phase 2 run, not separately. Entry 7 is **pending engineer** (optional) |
 | D4 | Setup and run instructions with test commands | README.md (setup, commands with expected results, usage example run as a test) | **Met** |
 | D5 | Limitations and follow-up risks | LIMITATIONS.md (19 items) | **Met** |
 
@@ -128,7 +176,7 @@ Not checked: Node 22.12 or 24, which are within `engines` but not installed here
 |---|---|---|
 | Understand the starter, or use the fallback; no frontend | No starter found; fallback recorded in DESIGN.md §1 and AI_USAGE entry 1 | **Met** |
 | State prerequisite/waitlist assumptions, incl. ineligible at the queue front | DESIGN.md §6, README "Policy in brief" | **Met** |
-| Use AI; independently review and verify; be candid about AI contribution and changes | AI used throughout. Candour: AI_USAGE Summary (rejections, 4 self-corrections), F1 written up openly. **Independent** verification so far: the engineer re-ran Phase 0 and made every decision; the mutation checks, hand trace and invariant review were AI-run | **Partial:** needs the engineer's own re-run and hand-trace check (see §4.6) |
+| Use AI; independently review and verify; be candid about AI contribution and changes | AI used throughout. Candour: AI_USAGE Summary (rejections, 4 self-corrections), F1 written up openly, and the history rewrite disclosed with a code-identity check. **Engineer-run** ([evidence/engineer-runs.md](evidence/engineer-runs.md)): tests and typecheck at every phase gate from Phase 0 to Phase 5; the tests-first red count (58 failed / 28 passed); coverage at Phases 3 and 4 (shown in part); `npm run mutate` 17/17 at `adf98c6`, including the dirty-tree guard refusing to run; and a full run of the final code with no `tail` (94 passed, every coverage row 100%, mutate 17/17). **Engineer-checked:** the §2 hand trace. **AI-run only:** the invariant review and the §4.1 clean-clone check | **Partial (narrowed):** still needed: a run of entry 7's 90-test state (optional). The full run at the final commit and the hand-trace check are done (engineer) |
 | No credentials, secrets or unnecessary sensitive data | Scan of all tracked files: no emails, home paths or secrets; the only learner IDs are `L` + digits | **Met** |
 | Prioritise correct capacity/queue behaviour, focused tests and review over features | No runtime deps, no extra features. 94 tests, mutation-checked | **Met** |
 | Submit implementation and deliverables together | One git repo, all deliverables at the root | **Met** (packaging and submission are the engineer's action) |
@@ -143,10 +191,12 @@ Not checked: Node 22.12 or 24, which are within `engines` but not installed here
 | Extras beyond the minimum (disclosed) | `scripts/mutate.mjs` and VERIFICATION.md (verification tooling and evidence); ID normalisation (engineer-requested) | Acceptable: no product scope added |
 
 ### 4.6 Open items for the engineer before submission
-1. **Mark every AI_USAGE.md Status** as Accepted, Edited or Rejected. This closes the AC7/D3 gap (a).
-2. **Re-run and record your own results** for the final commit: `npm ci && npm test && npm run coverage && npm run mutate`.
-   Paste them into AI_USAGE.md. This is independent evidence; the §4.1 run is the AI's.
-3. **Check the hand trace** (§2) against `drop()` / `planPromotion()` yourself.
-4. **Optional:** add verbatim prompts as an appendix in AI_USAGE.md (AC7 gap (b)), with local paths redacted.
+1. ~~**Mark every AI_USAGE.md Status**~~ Done 2026-10-29. This closes the AC7/D3 gap (a).
+2. ~~**Re-run and record your own results**~~ Done 2026-10-29, 23:15: full run of the final code, no `tail`; 94 passed,
+   coverage 100% on every row, mutate 17/17. See [evidence/engineer-runs.md § Final run](evidence/engineer-runs.md#final-run).
+3. ~~**Check the hand trace**~~ Done 2026-10-29: engineer checked §2 against `drop()` / `planPromotion()`; both rows matched.
+4. **Confirm the prompts** in [prompts/key-prompts.md](prompts/key-prompts.md) marked "quoted during the session", and supply any
+   verbatim text you still have for entries 0–3 and 7 (AC7 gap (b)).
 5. **Optional:** supply the rubric for a scored review.
 6. **Timebox:** the AI has no record of elapsed time. If the assessment asks for it, record hours spent yourself.
+7. **Optional:** run an `await` mutant inside `enroll` to turn LIMITATIONS #3's regression-guard claim from reasoned into demonstrated (§1 Limits).
