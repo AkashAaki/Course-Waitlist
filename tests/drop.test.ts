@@ -81,6 +81,34 @@ describe('invalid and repeated drops (AC5, AC6)', () => {
   });
 });
 
+describe('learner record deleted while in the offering (option A)', () => {
+  it('still lets an enrolled learner drop, freeing the seat and promoting the next learner', () => {
+    const { offering, directory } = setup({ capacity: 1 });
+    enrollAll(offering, ['L1'], 'ENROLLED');
+    enrollAll(offering, ['L2'], 'WAITLISTED');
+    directory.removeLearner('L1');
+    expect(offering.drop('L1')).toEqual({ ok: true, code: 'DROPPED', promoted: 'L2', skipped: [] });
+    expect(offering.snapshot()).toMatchObject({ enrolled: ['L2'], waitlist: [] });
+  });
+
+  it('still lets a waitlisted learner leave the waitlist', () => {
+    const { offering, directory } = setup({ capacity: 1 });
+    enrollAll(offering, ['L1'], 'ENROLLED');
+    enrollAll(offering, ['L2', 'L3'], 'WAITLISTED');
+    directory.removeLearner('L2');
+    expect(offering.drop('L2')).toEqual({ ok: true, code: 'LEFT_WAITLIST' });
+    expect(offering.snapshot().waitlist).toEqual(['L3']);
+  });
+
+  it('returns UNKNOWN_LEARNER once the deleted learner is no longer in the offering', () => {
+    const { offering, directory } = setup();
+    enrollAll(offering, ['L1'], 'ENROLLED');
+    directory.removeLearner('L1');
+    offering.drop('L1');
+    expect(expectUnchanged(offering, () => offering.drop('L1'))).toEqual({ ok: false, code: 'UNKNOWN_LEARNER' });
+  });
+});
+
 describe('re-enrollment (A4)', () => {
   // D15
   it('treats a promoted learner as enrolled: duplicate enroll is a no-op and they can drop', () => {

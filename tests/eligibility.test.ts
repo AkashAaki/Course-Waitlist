@@ -69,6 +69,13 @@ describe('InMemoryLearnerDirectory', () => {
     expect(() => new InMemoryLearnerDirectory({ '  ': [] })).toThrow(RangeError);
   });
 
+  it('removes a learner by canonical ID', () => {
+    const directory = new InMemoryLearnerDirectory({ L1: [], L2: [] });
+    directory.removeLearner(' l1 ');
+    expect(directory.getCompletedCourses('L1')).toBeUndefined();
+    expect(directory.getCompletedCourses('L2')).toEqual(new Set());
+  });
+
   it('copies input arrays, so later caller mutation does not leak in', () => {
     const courses = ['C101'];
     const directory = new InMemoryLearnerDirectory({ L1: courses });

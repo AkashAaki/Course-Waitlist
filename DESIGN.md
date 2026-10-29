@@ -1,6 +1,6 @@
 # Design: Course Waitlist Service
 
-> **Status:** Draft for engineer sign-off (Phase 1). Nothing in `CourseOffering` is implemented yet.
+> **Status:** Signed off by the engineer (Phase 1). Implemented in `src/courseOffering.ts` (Phase 3).
 
 ## 1. Context and goals
 No starter project was supplied, so this follows the spec's fallback: a small in-memory service for **one course
@@ -65,9 +65,13 @@ Request-level outcomes are **returned, never thrown**. Only programmer errors at
 | both | `UNKNOWN_LEARNER` | ✘ | none |
 | both | `INVALID_REQUEST {reason}` | ✘ | none. The ID is not a string, or is blank after normalisation. |
 
-**Validation order (the same for both methods):** `INVALID_REQUEST` → `UNKNOWN_LEARNER` → current membership
-(`ALREADY_*`, or for drop: enrolled → waitlisted → `NOT_ENROLLED`) → prerequisites (enroll only). Membership is checked
-before prerequisites, so an enrolled learner whose prerequisite is later revoked gets `ALREADY_ENROLLED` and is not evicted.
+**Validation order.** Both methods first apply the same format check (`INVALID_REQUEST`). After that:
+- **enroll:** `UNKNOWN_LEARNER` → membership (`ALREADY_ENROLLED` / `ALREADY_WAITLISTED`) → prerequisites
+  (`PREREQ_NOT_MET`). Membership is checked before prerequisites, so an enrolled learner whose prerequisite is later
+  revoked gets `ALREADY_ENROLLED` and is not evicted.
+- **drop:** membership first (waitlisted → `LEFT_WAITLIST`, enrolled → `DROPPED`); only for a learner in neither list,
+  `UNKNOWN_LEARNER` or `NOT_ENROLLED`. A learner already in the offering can therefore always leave it, even if their
+  directory record has been deleted. Otherwise their seat would be stuck forever. (Engineer decision "option A", Phase 3.)
 
 ## 5. Invariants
 | ID | Invariant | Enforced by |

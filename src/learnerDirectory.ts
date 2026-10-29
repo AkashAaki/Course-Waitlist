@@ -2,8 +2,8 @@ import { normalizeId } from './ids.js';
 import type { CourseId, LearnerDirectory, LearnerId } from './types.js';
 
 /**
- * In-memory stand-in for a learner records system. `setCompletedCourses` models a record change
- * between join and promotion (e.g. a grade correction revoking a prerequisite).
+ * In-memory stand-in for a learner records system. `setCompletedCourses` and `removeLearner` model record changes
+ * between join and promotion (e.g. a grade correction revoking a prerequisite, or a deleted record).
  * Learner and course IDs are stored and looked up in canonical form (see `normalizeId`).
  */
 export class InMemoryLearnerDirectory implements LearnerDirectory {
@@ -21,6 +21,11 @@ export class InMemoryLearnerDirectory implements LearnerDirectory {
 
   getCompletedCourses(learnerId: LearnerId): ReadonlySet<CourseId> | undefined {
     return this.records.get(normalizeId(learnerId));
+  }
+
+  /** Models a learner record being deleted from the records system. */
+  removeLearner(learnerId: LearnerId): void {
+    this.records.delete(normalizeId(learnerId));
   }
 
   setCompletedCourses(learnerId: LearnerId, courses: readonly CourseId[]): void {
