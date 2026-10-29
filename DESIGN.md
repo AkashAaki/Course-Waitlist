@@ -84,7 +84,9 @@ Request-level outcomes are **returned, never thrown**. Only programmer errors at
 | I6 | The eligibility rule is identical at join and promotion | Both call the one function `missingPrerequisites` / `isEligible` in `src/eligibility.ts` |
 | I7 | `waitlist.length > 0 ⇒ enrolled.size === capacity` | Joins only when full; promotion fills the seat or empties the waitlist trying |
 
-Planned tests (Phase 2) will assert I1, I2 and I7 after every operation, I4 by comparing snapshots before and after, and I3/I6 through targeted scenarios.
+The tests assert I1, I2 and I7 (plus canonical IDs) after **every** operation, via the `checked()` wrapper in
+`tests/helpers.ts`. They check I4 by comparing snapshots before and after (`expectUnchanged`), and I3/I6 through targeted
+scenarios and the seeded sweep S1. Mutation evidence for each invariant is in `VERIFICATION.md`.
 
 ## 6. Eligibility and waitlist policy
 - **Prerequisite rule:** a learner is eligible if and only if they have completed **every** course in `requiredCourseIds`.
@@ -127,9 +129,10 @@ it up, so a failure left the dropper gone and the head lost. Phase 4 review foun
 - **Approach: synchronous methods on a single thread.** `enroll` and `drop` contain no `await` and do no I/O. In Node, each
   call runs to completion before any other JavaScript runs, so validate → plan promotion → mutate cannot interleave with
   another request. This is what makes I4 and I5 hold.
-- **Test:** one `Promise.all` test sends two enrolls for the last seat and expects exactly one `ENROLLED`. Because the
-  methods are synchronous this is a **regression guard** (it would catch someone adding an `await` mid-operation),
-  **not** proof of thread safety. `LIMITATIONS.md` will label it that way.
+- **Tests:** two `Promise.all` tests in `tests/invariants.test.ts`. In one, two enrolls race for the last seat and
+  exactly one gets `ENROLLED`. In the other, a drop races a newcomer's enroll and the waitlisted learner, not the
+  newcomer, gets the seat. Because the methods are synchronous these are **regression guards** (they would catch someone
+  adding an `await` mid-operation), **not** proof of thread safety. `LIMITATIONS.md` #3 says so.
 - **Out of scope, but the next step:** with a real store, the same boundary would need a per-offering transaction
   or lock, such as a row lock on the offering or an optimistic version check, covering seat release and promotion together.
 - **Persistence:** none. State lives in process memory and is lost on restart.

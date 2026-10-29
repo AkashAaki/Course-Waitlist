@@ -72,3 +72,6 @@ scripts/mutate.mjs      mutation-check runner (npm run mutate)
 | [VERIFICATION.md](VERIFICATION.md) | Independent-verification evidence: mutation checks, hand trace, invariant review, Finding F1 |
 | [AI_USAGE.md](AI_USAGE.md) | AI prompt and use record: prompts, responses, accept/edit/reject, verification per change |
 | [LIMITATIONS.md](LIMITATIONS.md) | Known limitations and follow-up risks |
+
+## License
+[MIT](LICENSE)

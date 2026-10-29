@@ -9,7 +9,7 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 
 const repo = process.cwd();
 const OFFERING = 'src/courseOffering.ts';
@@ -107,8 +107,9 @@ for (const m of mutations) {
   pending = { path, original };
   try {
     writeFileSync(path, original.replace(m.find, m.replace));
+    // shell on Windows, where npx is npx.cmd and cannot be spawned directly.
     const run = spawnSync('npx', ['vitest', 'run', '--reporter=json', `--outputFile=${json}`], {
-      cwd: repo, timeout: 60_000, encoding: 'utf8',
+      cwd: repo, timeout: 60_000, encoding: 'utf8', shell: process.platform === 'win32',
     });
     if (run.error?.code === 'ETIMEDOUT') {
       results.push({ id: m.id, name: m.name, status: 'KILLED', detail: 'suite timed out (hang)', caughtBy: [] });
@@ -118,7 +119,7 @@ for (const m of mutations) {
     const caughtBy = report.testResults.flatMap((file) =>
       file.assertionResults
         .filter((t) => t.status !== 'passed')
-        .map((t) => `${file.name.split('/tests/')[1]} › ${t.title}`));
+        .map((t) => `${relative(repo, file.name)} › ${t.title}`));
     results.push({
       id: m.id, name: m.name,
       status: report.numFailedTests > 0 ? 'KILLED' : 'SURVIVED',
