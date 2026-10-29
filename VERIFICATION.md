@@ -1,6 +1,6 @@
 # Verification Evidence (Phase 4)
 
-Environment: Node v26.13.0, Vitest 5.0.5. Phase 4 started from commit `d0e680d` (Phase 3: 90/90 passing, 100% coverage).
+Environment: Node v26.13.0, Vitest 5.0.5. Phase 4 started from commit `9fee9bb` (Phase 3: 90/90 passing, 100% coverage).
 It found and fixed one defect (F1, §3). The final state is **94/94 passing** with 100% statement, branch, function and
 line coverage. Coverage shows that every line *ran*. The mutation checks show that the assertions *notice* when behaviour breaks.
 
@@ -33,7 +33,7 @@ green afterwards.
 | o | Prerequisite comparison not normalised | normalisation | **Killed** | 1/94 | U1 canonical-form test only |
 | p | `normalizeId` without NFKC | normalisation | **Killed** | 3/94 | `ids.test.ts` full-width case, directory canonical test |
 
-**Result: 17/17 killed.** The first run, against `d0e680d` before the F1 fix, used 16 mutants (an earlier version of
+**Result: 17/17 killed.** The first run, against `9fee9bb` before the F1 fix, used 16 mutants (an earlier version of
 this set, not committed) and killed 16/16. The set was then updated for the read-then-write code: the old
 "loop ignores capacity" mutant no longer applies, so it was replaced by (h), and (q) was added.
 
@@ -90,7 +90,7 @@ old code, and the enroll test passed, as expected because enroll was already saf
 The rubric (`Course-Registration-Rubric-Score.md`) was not supplied, so this review checks against the spec's acceptance
 criteria, deliverables, candidate expectations and scope boundaries. Verdicts are the AI's; **the engineer should confirm each one.**
 
-### 4.1 Clean-clone check (AI-run, commit `1a77787`)
+### 4.1 Clean-clone check (AI-run, commit `3f660a6`)
 Fresh `git clone` into a scratch directory; Node v26.13.0, npm 11.20.0. 24 tracked files; `node_modules/` and `coverage/` are not tracked.
 
 | Command | Result |
